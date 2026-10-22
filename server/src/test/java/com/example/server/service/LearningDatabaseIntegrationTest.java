@@ -13,11 +13,13 @@ import org.mybatis.spring.SqlSessionFactoryBean;
 import org.mybatis.spring.SqlSessionTemplate;
 import org.springframework.context.annotation.*;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import java.util.*;
+import java.sql.SQLException;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
@@ -161,15 +163,20 @@ class LearningDatabaseIntegrationTest {
     @Test void databaseRejectsInvalidTimestampAndMissingSegmentAndWrongAttemptOwner() {
         var question=service.generate(mediaId,"goal",userId).getFirst();
         var row=mapper.exercise(question.id(),userId);
-        assertThrows(DataIntegrityViolationException.class,()->mapper.insertExercise(new ExerciseRow("f".repeat(64),userId,
+        // MySQL reports CHECK failures as HY000/3819; Spring may leave them uncategorized.
+        var rejectedTimestamp=assertThrows(DataAccessException.class,()->mapper.insertExercise(new ExerciseRow("f".repeat(64),userId,
                 row.scopeDigest(),row.segmentId(),row.segmentStartMs(),row.segmentEndMs(),row.segmentEndMs(),
                 row.prompt(),row.expectedAnswer(),row.knowledgePoint(),row.evidenceText())));
+        var sqlFailure=assertInstanceOf(SQLException.class,rejectedTimestamp.getMostSpecificCause());
+        assertEquals(3819,sqlFailure.getErrorCode());
+        assertTrue(sqlFailure.getMessage().contains("ck_learning_exercise_timestamp"));
         assertThrows(DataIntegrityViolationException.class,()->mapper.insertExercise(new ExerciseRow("e".repeat(64),userId,
                 row.scopeDigest(),"0".repeat(64),row.segmentStartMs(),row.segmentEndMs(),row.timestampMs(),
                 row.prompt(),row.expectedAnswer(),row.knowledgePoint(),row.evidenceText())));
         assertThrows(DataIntegrityViolationException.class,()->mapper.insertAttempt(new AttemptRow(null,otherUserId,
                 UUID.randomUUID().toString(),row.id(),"wrong",false,null)));
         assertEquals(0,count("learning_attempts"));
+        assertEquals(2,count("learning_exercises"));
     }
     @Test void concurrentGenerationAndAnswerRetriesAreIdempotentAndHistoryFiltersCorrectness() throws Exception {
         ExecutorService pool=Executors.newFixedThreadPool(2);
