@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: learning-test-only
+          MYSQL_DATABASE: dovideo_learning_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -plearning-test-only"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=30
+    env:
+      LEARNING_TEST_DB_URL: jdbc:mysql://127.0.0.1:3306/dovideo_learning_test?useSSL=false&allowPublicKeyRetrieval=true
+      LEARNING_TEST_DB_USERNAME: root
+      LEARNING_TEST_DB_PASSWORD: learning-test-only
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate deployment files
+        working-directory: .
+        run: |
+          bash -n scripts/dev-up.sh
+          docker compose --env-file .env.example config --quiet
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - run: ./mvnw test
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  extension:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test
